@@ -1,0 +1,179 @@
+{
+  "name": "Hevy GPT Routine Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "hevy/recommendations",
+        "options": {}
+      },
+      "id": "WebhookTrigger",
+      "name": "Webhook:Recommendations",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxTries": 3
+        }
+      },
+      "name": "Guard:Has Sessions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "id": "IfHasSessions"
+    },
+    {
+      "parameters": {
+        "functionCode": "const ctx = items[0].json;\nconst recent = ctx.recent_sessions || [];\nconst sliced = recent.slice(-6);\nreturn [{json: { context: ctx.context, recent_sessions: sliced }}];"
+      },
+      "name": "Code:TrimHistory",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 300],
+      "id": "FunctionTrim"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "resource": "chatCompletion",
+        "model": "gpt-5.1",
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "jsonObject"
+        },
+        "messages": [
+          {
+            "text": "You are a strength coach. Return JSON with day, exercises (name, sets, reps, rpe_target, notes). Limit to 45 minutes. Consider equipment and constraints.",
+            "messageType": "system"
+          },
+          {
+            "text": "User context: {{$json.context | json}}. Recent sessions: {{$json.recent_sessions | json}}",
+            "messageType": "user"
+          }
+        ]
+      },
+      "name": "GPT:Suggest",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 4,
+      "position": [950, 300],
+      "id": "OpenAIGPT"
+    },
+    {
+      "parameters": {
+        "functionCode": "const parsed = items[0].json;\nif (!parsed.exercises) {\n  throw new Error('Missing exercises');\n}\nreturn [{ json: { routine: parsed, status: 'ok' }}];"
+      },
+      "name": "Code:Validate",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 300],
+      "id": "FunctionValidate"
+    },
+    {
+      "parameters": {
+        "url": "={{$json.hevy_base || 'https://api.hevyapp.com/routines'}}",
+        "method": "POST",
+        "sendBody": true,
+        "jsonBody": "={{$json.routine}}"
+      },
+      "name": "Hevy:CreateRoutine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 300],
+      "id": "HttpHevy"
+    },
+    {
+      "parameters": {
+        "authentication": "generic",
+        "url": "={{$json.callback || 'http://backend:8000/webhooks/n8n'}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "jsonBody": {
+          "workflow_run_id": "={{$execution.id}}",
+          "status": "success",
+          "summary": "Generated routine from GPT",
+          "routine_preview": "={{$json.routine}}"
+        }
+      },
+      "name": "Callback:Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1700, 300],
+      "id": "HttpCallback"
+    }
+  ],
+  "connections": {
+    "Webhook:Recommendations": {
+      "main": [
+        [
+          {
+            "node": "Guard:Has Sessions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard:Has Sessions": {
+      "main": [
+        [
+          {
+            "node": "Code:TrimHistory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code:TrimHistory": {
+      "main": [
+        [
+          {
+            "node": "GPT:Suggest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT:Suggest": {
+      "main": [
+        [
+          {
+            "node": "Code:Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code:Validate": {
+      "main": [
+        [
+          {
+            "node": "Hevy:CreateRoutine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hevy:CreateRoutine": {
+      "main": [
+        [
+          {
+            "node": "Callback:Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
